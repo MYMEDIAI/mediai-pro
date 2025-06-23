@@ -24,17 +24,23 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize session state variables
+
+
 def init_session_state():
     """Initialize all session state variables"""
+
+    # Load secrets safely
+    openai_key = st.secrets["openai"]["api_key"] if "openai" in st.secrets else None
+    google_key = st.secrets["google"]["maps_api_key"] if "google" in st.secrets else None
+
     defaults = {
         'user_location': None,
         'coordinates': None,
         'health_data': {},
         'location_set': False,
         'selected_analysis_type': "Comprehensive Health Analysis",
-        'openai_api_key': None,
-        'google_maps_key': None,
+        'openai_api_key': openai_key,
+        'google_maps_key': google_key,
         'analysis_results': {},
         'active_tab': 0,
         'form_submitted': False,
@@ -45,10 +51,11 @@ def init_session_state():
         'health_news': [],
         'auto_location_tried': False
     }
-    
+
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
+
 
 # Initialize session state
 init_session_state()
