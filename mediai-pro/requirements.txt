@@ -1,0 +1,6 @@
+streamlit
+openai==0.28.0
+requests
+plotly
+pandas
+streamlit-js-eval
