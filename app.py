@@ -59,7 +59,8 @@ logger = logging.getLogger(__name__)
 
 # API Keys Configuration (In production, use Streamlit secrets)
 GOOGLE_MAPS_API_KEY = "AIzaSyAV9wl5LyeXTXx1AelqgiFpgGtsRI1q4b8"
-OPENAI_API_KEY = "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"
+openai_key = st.secrets["openai"]["api_key"]  # ✅ Recommended
+
 
 # Store API keys in session state
 if not st.session_state.get('google_maps_key'):
