@@ -24,17 +24,21 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-
-
 def init_session_state():
     """Initialize all session state variables"""
-
     # Load secrets safely
-    openai_key = st.secrets["openai"]["api_key"] if "openai" in st.secrets else None
-    google_key = st.secrets["google"]["maps_api_key"] if "google" in st.secrets else None
+    openai_key = st.secrets.get("openai", {}).get("api_key", None) if "openai" in st.secrets else None
+    google_key = st.secrets.get("google", {}).get("maps_api_key", None) if "google" in st.secrets else None
 
     defaults = {
-        'user_location': None,
+        'user_location': {
+            'city': 'Unknown',
+            'state': 'Unknown',
+            'country': 'Unknown',
+            'lat': None,
+            'lon': None,
+            'formatted_address': 'Unknown'
+        },
         'coordinates': None,
         'health_data': {},
         'location_set': False,
@@ -56,7 +60,6 @@ def init_session_state():
         if key not in st.session_state:
             st.session_state[key] = value
 
-
 # Initialize session state
 init_session_state()
 
@@ -64,22 +67,11 @@ init_session_state()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-
-
-# Use secrets for production
-GOOGLE_MAPS_API_KEY = st.secrets["google"]["maps_api_key"]
-openai_key = st.secrets["openai"]["api_key"]
-
-st.write("Google Maps key (first 5 chars):", GOOGLE_MAPS_API_KEY[:5])
-st.write("OpenAI key (first 5 chars):", openai_key[:5])
-
-
-
 # Store API keys in session state
 if not st.session_state.get('google_maps_key'):
-    st.session_state.google_maps_key = GOOGLE_MAPS_API_KEY
+    st.session_state.google_maps_key = st.secrets.get("google", {}).get("maps_api_key", "")
 if not st.session_state.get('openai_api_key'):
-    st.session_state.openai_api_key = OPENAI_API_KEY
+    st.session_state.openai_api_key = st.secrets.get("openai", {}).get("api_key", "")
 
 # Data Classes
 @dataclass
@@ -207,14 +199,14 @@ class GoogleMapsService:
             response = requests.get(url, params=params, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                if data['results']:
+                if data.get('results'):
                     # Extract city, state, country from the results
                     result = data['results'][0]
                     address_components = result.get('address_components', [])
                     
-                    city = None
-                    state = None
-                    country = None
+                    city = 'Unknown'
+                    state = 'Unknown'
+                    country = 'Unknown'
                     
                     for component in address_components:
                         types = component.get('types', [])
@@ -227,9 +219,9 @@ class GoogleMapsService:
                     
                     return {
                         'formatted_address': result.get('formatted_address', ''),
-                        'city': city or 'Unknown',
-                        'state': state or 'Unknown',
-                        'country': country or 'Unknown',
+                        'city': city,
+                        'state': state,
+                        'country': country,
                         'lat': lat,
                         'lon': lon
                     }
@@ -553,10 +545,14 @@ def main():
     st.markdown('<p style="text-align: center; font-size: 1.1em; color: #666; margin-bottom: 30px;">Integrating Modern Medicine with Traditional Indian Healthcare</p>', unsafe_allow_html=True)
     
     # Initialize Google Maps Service
-    maps_service = GoogleMapsService(st.session_state.google_maps_key)
+    if st.session_state.get('google_maps_key'):
+        maps_service = GoogleMapsService(st.session_state.google_maps_key)
+    else:
+        st.error("Google Maps API key not configured")
+        maps_service = None
     
     # Automatic Location Detection
-    if not st.session_state.location_set and not st.session_state.auto_location_tried:
+    if not st.session_state.location_set and not st.session_state.auto_location_tried and maps_service:
         with st.spinner("🌍 Detecting your location automatically..."):
             auto_loc = get_auto_location()
             if auto_loc:
@@ -564,20 +560,20 @@ def main():
                 location_info = maps_service.reverse_geocode(auto_loc['lat'], auto_loc['lon'])
                 if location_info:
                     st.session_state.user_location = {
-                        'city': location_info['city'],
-                        'state': location_info['state'],
-                        'country': location_info['country'],
-                        'lat': auto_loc['lat'],
-                        'lon': auto_loc['lon'],
-                        'formatted_address': location_info['formatted_address']
+                        'city': location_info.get('city', 'Unknown'),
+                        'state': location_info.get('state', 'Unknown'),
+                        'country': location_info.get('country', 'Unknown'),
+                        'lat': auto_loc.get('lat'),
+                        'lon': auto_loc.get('lon'),
+                        'formatted_address': location_info.get('formatted_address', 'Unknown')
                     }
-                    st.session_state.coordinates = (auto_loc['lat'], auto_loc['lon'])
+                    st.session_state.coordinates = (auto_loc.get('lat'), auto_loc.get('lon'))
                     st.session_state.location_set = True
                     
                     st.markdown(f"""
                     <div class="location-detected">
                         ✅ Location Detected Automatically!<br>
-                        📍 {location_info['city']}, {location_info['state']}, {location_info['country']}
+                        📍 {location_info.get('city', 'Unknown')}, {location_info.get('state', 'Unknown')}, {location_info.get('country', 'Unknown')}
                     </div>
                     """, unsafe_allow_html=True)
             
@@ -592,28 +588,28 @@ def main():
         
         if st.session_state.user_location:
             loc = st.session_state.user_location
-            st.success(f"📍 {loc['city']}, {loc['state']}")
+            st.success(f"📍 {loc.get('city', 'Unknown')}, {loc.get('state', 'Unknown')}")
             
             if st.button("🔄 Update Location"):
                 st.session_state.location_set = False
                 st.session_state.auto_location_tried = False
                 st.rerun()
         else:
-            if st.button("📍 Detect My Location", use_container_width=True):
+            if st.button("📍 Detect My Location", use_container_width=True) and maps_service:
                 with st.spinner("Detecting location..."):
                     auto_loc = get_auto_location()
                     if auto_loc:
-                        location_info = maps_service.reverse_geocode(auto_loc['lat'], auto_loc['lon'])
+                        location_info = maps_service.reverse_geocode(auto_loc.get('lat'), auto_loc.get('lon'))
                         if location_info:
                             st.session_state.user_location = {
-                                'city': location_info['city'],
-                                'state': location_info['state'],
-                                'country': location_info['country'],
-                                'lat': auto_loc['lat'],
-                                'lon': auto_loc['lon'],
-                                'formatted_address': location_info['formatted_address']
+                                'city': location_info.get('city', 'Unknown'),
+                                'state': location_info.get('state', 'Unknown'),
+                                'country': location_info.get('country', 'Unknown'),
+                                'lat': auto_loc.get('lat'),
+                                'lon': auto_loc.get('lon'),
+                                'formatted_address': location_info.get('formatted_address', 'Unknown')
                             }
-                            st.session_state.coordinates = (auto_loc['lat'], auto_loc['lon'])
+                            st.session_state.coordinates = (auto_loc.get('lat'), auto_loc.get('lon'))
                             st.session_state.location_set = True
                             st.rerun()
                     else:
@@ -622,16 +618,15 @@ def main():
             # Manual location entry
             location_input = st.text_input("Or enter location manually:", placeholder="e.g., Mumbai, Maharashtra")
             if location_input and st.button("Set Location"):
-                # Use Google Geocoding API
                 st.warning("Manual location entry requires geocoding implementation")
         
         # API Status
         st.markdown("## 🔌 API Status")
         col1, col2 = st.columns(2)
         with col1:
-            st.success("✅ OpenAI")
+            st.success("✅ OpenAI") if st.session_state.get('openai_api_key') else st.error("❌ OpenAI")
         with col2:
-            st.success("✅ Google Maps")
+            st.success("✅ Google Maps") if st.session_state.get('google_maps_key') else st.error("❌ Google Maps")
     
     # Weather Display
     if st.session_state.coordinates and st.session_state.location_set:
@@ -642,13 +637,13 @@ def main():
         
         col1, col2, col3, col4 = st.columns(4)
         with col1:
-            st.metric("🌡️ Temperature", f"{weather_data['temperature']}°C", f"Feels like {weather_data['feels_like']}°C")
+            st.metric("🌡️ Temperature", f"{weather_data.get('temperature', 'N/A')}°C", f"Feels like {weather_data.get('feels_like', 'N/A')}°C")
         with col2:
-            st.metric("💧 Humidity", f"{weather_data['humidity']}%")
+            st.metric("💧 Humidity", f"{weather_data.get('humidity', 'N/A')}%")
         with col3:
-            st.metric("🌤️ Condition", weather_data['description'].title())
+            st.metric("🌤️ Condition", weather_data.get('description', 'N/A').title())
         with col4:
-            st.metric("🔵 Pressure", f"{weather_data['pressure']} hPa")
+            st.metric("🔵 Pressure", f"{weather_data.get('pressure', 'N/A')} hPa")
     
     st.markdown("---")
     
@@ -770,10 +765,10 @@ def main():
         # Health Score
         health_data = st.session_state.health_data
         health_score = calculate_health_score(
-            health_data['vitals'],
-            health_data['bmi'],
-            health_data['patient']['age'],
-            health_data['lifestyle']
+            health_data.get('vitals', {}),
+            health_data.get('bmi', 0),
+            health_data.get('patient', {}).get('age', 30),
+            health_data.get('lifestyle', {})
         )
         
         col1, col2, col3 = st.columns([1, 2, 1])
@@ -782,7 +777,7 @@ def main():
             # Display health score
             fig = go.Figure(go.Indicator(
                 mode = "gauge+number",
-                value = health_score['score'],
+                value = health_score.get('score', 0),
                 domain = {'x': [0, 1], 'y': [0, 1]},
                 title = {'text': "Overall Health Score"},
                 gauge = {
@@ -804,33 +799,36 @@ def main():
             fig.update_layout(height=400)
             st.plotly_chart(fig, use_container_width=True)
             
-            st.markdown(f"<h3 style='text-align: center;'>Status: {health_score['status']}</h3>", 
+            st.markdown(f"<h3 style='text-align: center;'>Status: {health_score.get('status', 'Unknown')}</h3>", 
                 unsafe_allow_html=True)
         
         # BMI Analysis
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric("BMI", f"{health_data['bmi']:.1f}")
+            st.metric("BMI", f"{health_data.get('bmi', 0):.1f}")
         with col2:
-            bmi_category = "Underweight" if health_data['bmi'] < 18.5 else "Normal" if health_data['bmi'] < 23 else "Overweight" if health_data['bmi'] < 27 else "Obese"
+            bmi_value = health_data.get('bmi', 0)
+            bmi_category = "Underweight" if bmi_value < 18.5 else "Normal" if bmi_value < 23 else "Overweight" if bmi_value < 27 else "Obese"
             st.metric("Category", bmi_category)
         with col3:
-            ideal_weight_min = 18.5 * (health_data['patient']['height']/100) ** 2
-            ideal_weight_max = 22.9 * (health_data['patient']['height']/100) ** 2
+            height_m = health_data.get('patient', {}).get('height', 170) / 100
+            ideal_weight_min = 18.5 * (height_m ** 2)
+            ideal_weight_max = 22.9 * (height_m ** 2)
             st.metric("Ideal Weight", f"{ideal_weight_min:.0f}-{ideal_weight_max:.0f} kg")
         with col4:
-            st.metric("BP", f"{health_data['vitals']['bp_systolic']}/{health_data['vitals']['bp_diastolic']}")
+            vitals = health_data.get('vitals', {})
+            st.metric("BP", f"{vitals.get('bp_systolic', 0)}/{vitals.get('bp_diastolic', 0)}")
         
         # Risk Factors and Recommendations
-        if health_score['risk_factors']:
+        if health_score.get('risk_factors'):
             st.markdown("### ⚠️ Risk Factors")
-            for factor in health_score['risk_factors']:
+            for factor in health_score.get('risk_factors', []):
                 st.warning(f"• {factor}")
         
-        if health_score['recommendations']:
+        if health_score.get('recommendations'):
             st.markdown("### 💡 Recommendations")
-            for rec in health_score['recommendations']:
+            for rec in health_score.get('recommendations', []):
                 st.info(f"• {rec}")
         
         # Tabs for different analyses
@@ -903,7 +901,7 @@ def main():
         with tabs[1]:
             st.markdown("### 🏥 Nearby Hospitals")
             
-            if st.session_state.coordinates:
+            if st.session_state.coordinates and maps_service:
                 search_radius = st.slider("Search Radius (km):", 1, 20, 5) * 1000
                 
                 if st.button("🔍 Search Hospitals", key="search_hospitals"):
@@ -935,26 +933,26 @@ def main():
                     
                     # Display hospitals
                     for hospital in filtered_hospitals:
-                        with st.expander(f"🏥 {hospital['name']} - {hospital['distance']} km"):
+                        with st.expander(f"🏥 {hospital.get('name', 'Unknown')} - {hospital.get('distance', 0)} km"):
                             col1, col2, col3 = st.columns(3)
                             with col1:
                                 st.metric("Rating", f"⭐ {hospital.get('rating', 'N/A')}/5")
                                 st.write(f"Reviews: {hospital.get('user_ratings_total', 0)}")
                             with col2:
                                 st.metric("Status", "🟢 Open" if hospital.get('open_now') else "🔴 Closed")
-                                st.write(f"Distance: {hospital['distance']} km")
+                                st.write(f"Distance: {hospital.get('distance', 0)} km")
                             with col3:
                                 if hospital.get('phone'):
                                     st.write(f"📞 {hospital['phone']}")
                                 if hospital.get('website'):
                                     st.write(f"🌐 [Website]({hospital['website']})")
                             
-                            st.write(f"📍 **Address:** {hospital['address']}")
+                            st.write(f"📍 **Address:** {hospital.get('address', 'Unknown')}")
                             if hospital.get('hours'):
                                 st.write(f"🕒 **Hours:** {hospital['hours']}")
                             
                             # Map link
-                            maps_url = f"https://www.google.com/maps/search/?api=1&query={hospital['lat']},{hospital['lon']}"
+                            maps_url = f"https://www.google.com/maps/search/?api=1&query={hospital.get('lat', 0)},{hospital.get('lon', 0)}"
                             st.write(f"🗺️ [View on Google Maps]({maps_url})")
                 else:
                     st.info("Click 'Search Hospitals' to find nearby medical facilities")
@@ -964,7 +962,7 @@ def main():
         with tabs[2]:
             st.markdown("### 💊 Nearby Pharmacies")
             
-            if st.session_state.coordinates:
+            if st.session_state.coordinates and maps_service:
                 search_radius = st.slider("Search Radius (km):", 1, 10, 3, key="pharmacy_radius") * 1000
                 
                 if st.button("🔍 Search Pharmacies", key="search_pharmacies"):
@@ -982,26 +980,26 @@ def main():
                     
                     # Display pharmacies
                     for pharmacy in st.session_state.nearby_pharmacies:
-                        with st.expander(f"💊 {pharmacy['name']} - {pharmacy['distance']} km"):
+                        with st.expander(f"💊 {pharmacy.get('name', 'Unknown')} - {pharmacy.get('distance', 0)} km"):
                             col1, col2 = st.columns(2)
                             with col1:
                                 st.metric("Rating", f"⭐ {pharmacy.get('rating', 'N/A')}/5")
                                 st.write(f"Status: {'🟢 Open' if pharmacy.get('open_now') else '🔴 Closed'}")
                             with col2:
-                                st.metric("Distance", f"{pharmacy['distance']} km")
+                                st.metric("Distance", f"{pharmacy.get('distance', 0)} km")
                                 if pharmacy.get('phone'):
                                     st.write(f"📞 {pharmacy['phone']}")
                             
-                            st.write(f"📍 **Address:** {pharmacy['address']}")
+                            st.write(f"📍 **Address:** {pharmacy.get('address', 'Unknown')}")
                             if pharmacy.get('hours'):
                                 st.write(f"🕒 **Hours:** {pharmacy['hours']}")
                             
                             # Check for Jan Aushadhi
-                            if 'jan aushadhi' in pharmacy['name'].lower():
+                            if 'jan aushadhi' in pharmacy.get('name', '').lower():
                                 st.success("🏛️ Jan Aushadhi Store - Generic medicines at 90% less cost!")
                             
                             # Map link
-                            maps_url = f"https://www.google.com/maps/search/?api=1&query={pharmacy['lat']},{pharmacy['lon']}"
+                            maps_url = f"https://www.google.com/maps/search/?api=1&query={pharmacy.get('lat', 0)},{pharmacy.get('lon', 0)}"
                             st.write(f"🗺️ [View on Google Maps]({maps_url})")
                 else:
                     st.info("Click 'Search Pharmacies' to find nearby medical stores")
@@ -1011,7 +1009,7 @@ def main():
         with tabs[3]:
             st.markdown("### 🧪 Nearby Diagnostic Labs")
             
-            if st.session_state.coordinates:
+            if st.session_state.coordinates and maps_service:
                 search_radius = st.slider("Search Radius (km):", 1, 10, 5, key="lab_radius") * 1000
                 
                 if st.button("🔍 Search Labs", key="search_labs"):
@@ -1028,7 +1026,7 @@ def main():
                     st.success(f"Found {len(st.session_state.nearby_labs)} diagnostic centers nearby")
                     
                     # Recommended tests based on age and health data
-                    age = health_data['patient']['age']
+                    age = health_data.get('patient', {}).get('age', 30)
                     st.markdown("#### 🧪 Recommended Tests Based on Your Profile")
                     
                     tests = [
@@ -1054,22 +1052,22 @@ def main():
                     
                     # Display labs
                     for lab in st.session_state.nearby_labs:
-                        with st.expander(f"🧪 {lab['name']} - {lab['distance']} km"):
+                        with st.expander(f"🧪 {lab.get('name', 'Unknown')} - {lab.get('distance', 0)} km"):
                             col1, col2 = st.columns(2)
                             with col1:
                                 st.metric("Rating", f"⭐ {lab.get('rating', 'N/A')}/5")
                                 st.write(f"Status: {'🟢 Open' if lab.get('open_now') else '🔴 Closed'}")
                             with col2:
-                                st.metric("Distance", f"{lab['distance']} km")
+                                st.metric("Distance", f"{lab.get('distance', 0)} km")
                                 if lab.get('phone'):
                                     st.write(f"📞 {lab['phone']}")
                             
-                            st.write(f"📍 **Address:** {lab['address']}")
+                            st.write(f"📍 **Address:** {lab.get('address', 'Unknown')}")
                             if lab.get('hours'):
                                 st.write(f"🕒 **Hours:** {lab['hours']}")
                             
                             # Map link
-                            maps_url = f"https://www.google.com/maps/search/?api=1&query={lab['lat']},{lab['lon']}"
+                            maps_url = f"https://www.google.com/maps/search/?api=1&query={lab.get('lat', 0)},{lab.get('lon', 0)}"
                             st.write(f"🗺️ [View on Google Maps]({maps_url})")
                 else:
                     st.info("Click 'Search Labs' to find nearby diagnostic centers")
@@ -1138,6 +1136,7 @@ def main():
                     st.info("Medicine not found in database. Please consult a pharmacist.")
             
             # Common medicines based on symptoms
+            symptoms = health_data.get('symptoms', '')
             if symptoms:
                 st.markdown("#### 💊 Suggested Medicines Based on Your Symptoms")
                 
@@ -1165,7 +1164,7 @@ def main():
             
             # Nearby Jan Aushadhi stores
             st.markdown("#### 🏛️ Nearest Jan Aushadhi Stores")
-            if st.button("Find Jan Aushadhi Stores", key="jan_aushadhi"):
+            if st.button("Find Jan Aushadhi Stores", key="jan_aushadhi") and maps_service:
                 with st.spinner("Searching for Jan Aushadhi stores..."):
                     # Search for Jan Aushadhi stores specifically
                     jan_stores = maps_service.search_nearby_places(
@@ -1175,12 +1174,12 @@ def main():
                         5000
                     )
                     
-                    jan_aushadhi_stores = [store for store in jan_stores if 'jan aushadhi' in store['name'].lower()]
+                    jan_aushadhi_stores = [store for store in jan_stores if 'jan aushadhi' in store.get('name', '').lower()]
                     
                     if jan_aushadhi_stores:
                         for store in jan_aushadhi_stores:
-                            st.success(f"🏛️ {store['name']} - {store['distance']} km away")
-                            st.write(f"📍 {store['address']}")
+                            st.success(f"🏛️ {store.get('name', 'Unknown')} - {store.get('distance', 0)} km away")
+                            st.write(f"📍 {store.get('address', 'Unknown')}")
                     else:
                         st.info("No Jan Aushadhi stores found nearby. Check with local pharmacies for generic medicines.")
         
@@ -1188,11 +1187,17 @@ def main():
             st.markdown("### 🥗 Personalized Diet Plan")
             
             # Calculate calorie needs
+            gender = health_data.get('patient', {}).get('gender', 'Male')
+            weight = health_data.get('patient', {}).get('weight', 70)
+            height = health_data.get('patient', {}).get('height', 170)
+            age = health_data.get('patient', {}).get('age', 30)
+            
             if gender == "Male":
                 bmr = 88.362 + (13.397 * weight) + (4.799 * height) - (5.677 * age)
             else:
                 bmr = 447.593 + (9.247 * weight) + (3.098 * height) - (4.330 * age)
             
+            exercise_freq = health_data.get('lifestyle', {}).get('exercise_frequency', 'Rarely')
             activity_multiplier = 1.2 if exercise_freq == "Never" else 1.375 if exercise_freq == "Rarely" else 1.55
             daily_calories = int(bmr * activity_multiplier)
             
@@ -1240,7 +1245,7 @@ def main():
             
             # Local food recommendations
             st.markdown(f"#### 🌍 Local Healthy Food Options in {st.session_state.user_location.get('city', 'your area')}")
-            if st.button("Find Healthy Restaurants", key="healthy_restaurants"):
+            if st.button("Find Healthy Restaurants", key="healthy_restaurants") and maps_service:
                 with st.spinner("Searching for healthy food options..."):
                     restaurants = maps_service.search_nearby_places(
                         st.session_state.coordinates[0],
@@ -1251,12 +1256,12 @@ def main():
                     
                     # Filter for healthy options
                     healthy_keywords = ['vegetarian', 'vegan', 'salad', 'healthy', 'organic', 'juice']
-                    healthy_restaurants = [r for r in restaurants if any(keyword in r['name'].lower() for keyword in healthy_keywords)]
+                    healthy_restaurants = [r for r in restaurants if any(keyword in r.get('name', '').lower() for keyword in healthy_keywords)]
                     
                     if healthy_restaurants:
                         for restaurant in healthy_restaurants[:5]:
-                            st.write(f"🥗 **{restaurant['name']}** - {restaurant['distance']} km")
-                            st.write(f"   Rating: ⭐ {restaurant.get('rating', 'N/A')}/5 | {restaurant['address']}")
+                            st.write(f"🥗 **{restaurant.get('name', 'Unknown')}** - {restaurant.get('distance', 0)} km")
+                            st.write(f"   Rating: ⭐ {restaurant.get('rating', 'N/A')}/5 | {restaurant.get('address', 'Unknown')}")
                     else:
                         st.info("No specifically healthy restaurants found. Look for vegetarian options in regular restaurants.")
         
